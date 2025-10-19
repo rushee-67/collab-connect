@@ -1,24 +1,30 @@
 // server/socketHandlers/webrtcHandler.js
 
+// Maintain userId → socketId mapping
+const userSocketMap = new Map();
+
 const handleWebRTCEvents = (io, socket) => {
   console.log(`🔌 New client connected: ${socket.id}`);
 
   // When a user joins a meeting room
   socket.on('join-room', (roomId, userInfo) => {
     console.log(`User ${userInfo.userId} joining room ${roomId}`);
-    
+
     // Join the socket to the room
     socket.join(roomId);
-    
-    // Store user info in socket
+
+    // Store user info
     socket.currentRoomId = roomId;
     socket.currentUserId = userInfo.userId;
     socket.currentUserName = userInfo.userName;
 
+    // Map userId → socket.id
+    userSocketMap.set(userInfo.userId, socket.id);
+
     // Get all sockets in this room (existing users)
     const socketsInRoom = io.sockets.adapter.rooms.get(roomId);
     const existingUsers = [];
-    
+
     if (socketsInRoom) {
       socketsInRoom.forEach(socketId => {
         if (socketId !== socket.id) {
@@ -27,51 +33,68 @@ const handleWebRTCEvents = (io, socket) => {
             existingUsers.push({
               userId: existingSocket.currentUserId,
               userName: existingSocket.currentUserName,
-              socketId: socketId
+              socketId
             });
           }
         }
       });
     }
 
-    // Send existing users to the new user
+    // Send existing users list to the new user
     socket.emit('existing-users', existingUsers);
 
-    // Tell everyone else in the room that a new user joined
+    // Notify others that a new user joined
     socket.to(roomId).emit('user-connected', {
       userId: userInfo.userId,
       userName: userInfo.userName,
       socketId: socket.id
     });
 
-    console.log(`User ${userInfo.userId} joined room ${roomId}. Existing users:`, existingUsers.length);
+    console.log(
+      `✅ ${userInfo.userId} joined room ${roomId}. Existing users: ${existingUsers.length}`
+    );
   });
 
-  // Handle WebRTC signaling - offer
+  // Handle WebRTC signaling — Offer
   socket.on('offer', (data) => {
-    console.log(`Offer from ${data.caller} to ${data.target}`);
-    socket.to(data.target).emit('offer', {
-      offer: data.offer,
-      caller: data.caller || socket.currentUserId
-    });
+    console.log(`📡 Offer from ${data.caller} to ${data.target}`);
+    const targetSocketId = userSocketMap.get(data.target);
+    if (targetSocketId) {
+      io.to(targetSocketId).emit('offer', {
+        offer: data.offer,
+        caller: data.caller
+      });
+    } else {
+      console.warn(`⚠️ No socket found for target ${data.target}`);
+    }
   });
 
-  // Handle WebRTC signaling - answer
+  // Handle WebRTC signaling — Answer
   socket.on('answer', (data) => {
-    console.log(`Answer from ${data.answerer} to ${data.target}`);
-    socket.to(data.target).emit('answer', {
-      answer: data.answer,
-      answerer: data.answerer || socket.currentUserId
-    });
+    console.log(`📡 Answer from ${data.answerer} to ${data.target}`);
+    const targetSocketId = userSocketMap.get(data.target);
+    if (targetSocketId) {
+      io.to(targetSocketId).emit('answer', {
+        answer: data.answer,
+        answerer: data.answerer
+      });
+    } else {
+      console.warn(`⚠️ No socket found for target ${data.target}`);
+    }
   });
 
   // Handle ICE candidates
   socket.on('ice-candidate', (data) => {
-    console.log(`ICE candidate from ${data.from} to ${data.target}`);
-    socket.to(data.target).emit('ice-candidate', {
-      candidate: data.candidate,
-      from: data.from || socket.currentUserId
-    });
+    console.log(`❄️ ICE candidate from ${data.from} to ${data.target}`);
+    const targetSocketId = userSocketMap.get(data.target);
+    if (targetSocketId) {
+      io.to(targetSocketId).emit('ice-candidate', {
+        candidate: data.candidate,
+        from: data.from
+      });
+    } else {
+      console.warn(`⚠️ No socket found for target ${data.target}`);
+    }
   });
 
   // Handle screen sharing
@@ -104,6 +127,9 @@ const handleWebRTCEvents = (io, socket) => {
   // Handle disconnection
   socket.on('disconnect', () => {
     console.log(`🔌 Client disconnected: ${socket.id}`);
+    if (socket.currentUserId) {
+      userSocketMap.delete(socket.currentUserId);
+    }
     if (socket.currentRoomId && socket.currentUserId) {
       socket.to(socket.currentRoomId).emit('user-disconnected', socket.currentUserId);
     }
