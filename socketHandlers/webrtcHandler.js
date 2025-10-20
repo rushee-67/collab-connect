@@ -10,18 +10,15 @@ const handleWebRTCEvents = (io, socket) => {
   socket.on('join-room', (roomId, userInfo) => {
     console.log(`User ${userInfo.userId} joining room ${roomId}`);
 
-    // Join the socket to the room
     socket.join(roomId);
-
-    // Store user info
     socket.currentRoomId = roomId;
     socket.currentUserId = userInfo.userId;
     socket.currentUserName = userInfo.userName;
 
-    // Map userId → socket.id
+    // Map userId → socketId
     userSocketMap.set(userInfo.userId, socket.id);
 
-    // Get all sockets in this room (existing users)
+    // List of existing users in the room
     const socketsInRoom = io.sockets.adapter.rooms.get(roomId);
     const existingUsers = [];
 
@@ -40,82 +37,68 @@ const handleWebRTCEvents = (io, socket) => {
       });
     }
 
-    // Send existing users list to the new user
+    // Send list of existing users to the new joiner
     socket.emit('existing-users', existingUsers);
 
-    // Notify others that a new user joined
+    // Notify others of new user
     socket.to(roomId).emit('user-connected', {
       userId: userInfo.userId,
       userName: userInfo.userName,
       socketId: socket.id
     });
 
-    console.log(
-      `✅ ${userInfo.userId} joined room ${roomId}. Existing users: ${existingUsers.length}`
-    );
+    console.log(`✅ ${userInfo.userName} joined room ${roomId}`);
   });
 
-  // Handle WebRTC signaling — Offer
+  // WebRTC signaling: Offer
   socket.on('offer', (data) => {
-    console.log(`📡 Offer from ${data.caller} to ${data.target}`);
     const targetSocketId = userSocketMap.get(data.target);
     if (targetSocketId) {
       io.to(targetSocketId).emit('offer', {
         offer: data.offer,
         caller: data.caller
       });
-    } else {
-      console.warn(`⚠️ No socket found for target ${data.target}`);
     }
   });
 
-  // Handle WebRTC signaling — Answer
+  // WebRTC signaling: Answer
   socket.on('answer', (data) => {
-    console.log(`📡 Answer from ${data.answerer} to ${data.target}`);
     const targetSocketId = userSocketMap.get(data.target);
     if (targetSocketId) {
       io.to(targetSocketId).emit('answer', {
         answer: data.answer,
         answerer: data.answerer
       });
-    } else {
-      console.warn(`⚠️ No socket found for target ${data.target}`);
     }
   });
 
-  // Handle ICE candidates
+  // ICE Candidate exchange
   socket.on('ice-candidate', (data) => {
-    console.log(`❄️ ICE candidate from ${data.from} to ${data.target}`);
     const targetSocketId = userSocketMap.get(data.target);
     if (targetSocketId) {
       io.to(targetSocketId).emit('ice-candidate', {
         candidate: data.candidate,
         from: data.from
       });
-    } else {
-      console.warn(`⚠️ No socket found for target ${data.target}`);
     }
   });
 
-  // Handle screen sharing
-  socket.on('screen-share-start', (roomId) => {
+  // ✅ Screen share event alignment
+  socket.on('screen-share-started', (roomId) => {
     socket.to(roomId).emit('screen-share-started', socket.currentUserId);
   });
 
-  socket.on('screen-share-stop', (roomId) => {
+  socket.on('screen-share-stopped', (roomId) => {
     socket.to(roomId).emit('screen-share-stopped', socket.currentUserId);
   });
 
-  // Handle chat messages
+  // ✅ Chat message fix (single emit, correct structure)
   socket.on('chat-message', (data) => {
-    io.to(data.roomId).emit('chat-message', {
-      message: data.message,
-      sender: data.sender,
-      timestamp: new Date().toISOString()
-    });
+    // Only send to others in room (not sender)
+    socket.to(data.roomId).emit('chat-message', data.message);
   });
 
-  // Handle emoji reactions
+  // Emoji reactions
   socket.on('emoji-reaction', (data) => {
     socket.to(data.roomId).emit('emoji-reaction', {
       emoji: data.emoji,
@@ -124,12 +107,15 @@ const handleWebRTCEvents = (io, socket) => {
     });
   });
 
+  // ✅ End meeting for everyone
+  socket.on('meeting-ended', (data) => {
+    io.to(data.roomId).emit('meeting-ended');
+  });
+
   // Handle disconnection
   socket.on('disconnect', () => {
     console.log(`🔌 Client disconnected: ${socket.id}`);
-    if (socket.currentUserId) {
-      userSocketMap.delete(socket.currentUserId);
-    }
+    if (socket.currentUserId) userSocketMap.delete(socket.currentUserId);
     if (socket.currentRoomId && socket.currentUserId) {
       socket.to(socket.currentRoomId).emit('user-disconnected', socket.currentUserId);
     }
