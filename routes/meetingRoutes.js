@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const mongoose = require('mongoose');
-const ScheduledMeeting = require('../models/ScheduledMeeting');
+const ScheduledMeeting = require('../models/scheduledMeeting');
 
 // --- SCHEDULE MEETING ---
 router.post('/schedule', async (req, res) => {
